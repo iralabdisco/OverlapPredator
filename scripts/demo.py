@@ -30,6 +30,8 @@ import data_input_utils
 
 setup_seed(0)
 
+def pcd2xyz(pcd):
+    return np.asarray(pcd.points)
 
 def main(config, neighborhood_limits, args):
     config.model.eval()
@@ -42,8 +44,8 @@ def main(config, neighborhood_limits, args):
         # initialize result file
         os.makedirs(args.output_dir, exist_ok=True)
         header_comment = "# " + " ".join(sys.argv[:]) + "\n"
-        header = ['id', 'initial_error', 'final_error', 'transformation', 'status_code']
-        result_name = problem_name + "_result.txt"
+        header = ['id', 'status_code']
+        result_name = problem_name + "_status.txt"
         result_filename = os.path.join(args.output_dir, result_name)
         with open(result_filename, mode='w') as f:
             f.write(header_comment)
@@ -78,31 +80,32 @@ def main(config, neighborhood_limits, args):
             try:
                 feats, scores_overlap, scores_saliency = config.model(inputs)  # [N1, C1], [N2, C2]
                 torch.cuda.empty_cache()
-                status = "ok"
+                results = [problem_id, 'ok']
+                with open(result_filename, mode='a') as f:
+                    csv_writer = csv.writer(f, delimiter=';', quoting=csv.QUOTE_NONE, escapechar=' ')
+                    csv_writer.writerow(results)
             except RuntimeError as e:
                 if str(e).startswith('CUDA out of memory.'):
                     torch.cuda.empty_cache()
-                    status = "OOM"
                     n_fails_oom += 1
-                    #TODO save error code
+                    results = [problem_id, 'OOM']
+                    with open(result_filename, mode='a') as f:
+                        csv_writer = csv.writer(f, delimiter=';', quoting=csv.QUOTE_NONE, escapechar=' ')
+                        csv_writer.writerow(results)
                     continue
                 else:
                     torch.cuda.empty_cache()
-                    status = "runtime_error"
                     n_fails_other += 1
-                    #TODO save error code
+                    results = [problem_id, 'runtime_error']
+                    with open(result_filename, mode='a') as f:
+                        csv_writer = csv.writer(f, delimiter=';', quoting=csv.QUOTE_NONE, escapechar=' ')
+                        csv_writer.writerow(results)
                     continue
-
-            torch.cuda.empty_cache()
 
             pcd = inputs['points'][0]
             len_src = inputs['stack_lengths'][0][0]
-            c_rot, c_trans = inputs['rot'], inputs['trans']
-            correspondence = inputs['correspondences']
 
             src_pcd, tgt_pcd = pcd[:len_src], pcd[len_src:]
-            src_raw = copy.deepcopy(src_pcd)
-            tgt_raw = copy.deepcopy(tgt_pcd)
             src_feats, tgt_feats = feats[:len_src].detach().cpu(), feats[len_src:].detach().cpu()
             src_overlap, src_saliency = scores_overlap[:len_src].detach().cpu(), scores_saliency[
                                                                                  :len_src].detach().cpu()
@@ -115,19 +118,24 @@ def main(config, neighborhood_limits, args):
             tgt_scores = tgt_overlap * tgt_saliency
 
 
-            if (src_pcd.size(0) > config.n_points):
+            if (src_pcd.size(0) > 1000):
                 idx_src = np.arange(src_pcd.size(0))
                 probs_src = (src_scores / src_scores.sum()).numpy().flatten()
-                idx_src = np.random.choice(idx_src, size=config.n_points, replace=False, p=probs_src)
+                idx_src = np.random.choice(idx_src, size=1000, replace=False, p=probs_src)
                 src_pcd, src_feats = src_pcd[idx_src], src_feats[idx_src]
-            if (tgt_pcd.size(0) > config.n_points):
+            if (tgt_pcd.size(0) > 1000):
                 idx = np.arange(tgt_pcd.size(0))
                 probs = (tgt_scores / tgt_scores.sum()).numpy().flatten()
-                idx = np.random.choice(idx, size=config.n_points, replace=False, p=probs)
+                idx = np.random.choice(idx, size=1000, replace=False, p=probs)
                 tgt_pcd, tgt_feats = tgt_pcd[idx], tgt_feats[idx]
 
             ########################################
-            # TODO save features
+            # Save out the output
+            source_features_npz = os.path.join(args.output_dir, '{}'.format(problem_id))
+            np.savez_compressed(source_features_npz, xyz_down=src_pcd, features=src_feats)
+
+            target_features_npz = os.path.join(args.output_dir, os.path.splitext(target_pcd_filename)[0])
+            np.savez_compressed(target_features_npz, xyz_down=tgt_pcd, features=tgt_feats)
 
     print("N fails OOM: ", n_fails_oom)
     print("N fails runtime: ", n_fails_other)
@@ -151,9 +159,10 @@ if __name__ == '__main__':
     if args.config == "3DMatch":
         yaml_config_path = "configs/test/indoor.yaml"
     elif args.config == "KITTI":
-        yaml_config_path = "configs/test/kitty.yaml"
+        yaml_config_path = "configs/test/kitti.yaml"
     else:
         raise NotImplemented
+
     config = load_config(yaml_config_path)
     config = edict(config)
     if config.gpu_mode:
@@ -180,7 +189,7 @@ if __name__ == '__main__':
     # Taken from https://github.com/prs-eth/OverlapPredator/issues/21
     if args.config == "3DMatch":
         neighborhood_limits = np.array([38, 36, 36, 38])
-    elif args.config == "KITTi":
+    elif args.config == "KITTI":
         neighborhood_limits = np.array([51, 62, 71, 76])
     else:
         raise NotImplemented
