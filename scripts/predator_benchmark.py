@@ -118,24 +118,29 @@ def main(config, neighborhood_limits, args):
             tgt_scores = tgt_overlap * tgt_saliency
 
 
-            if (src_pcd.size(0) > 1000):
+            if (src_pcd.size(0) > args.n_points):
                 idx_src = np.arange(src_pcd.size(0))
                 probs_src = (src_scores / src_scores.sum()).numpy().flatten()
-                idx_src = np.random.choice(idx_src, size=1000, replace=False, p=probs_src)
+                idx_src = np.random.choice(idx_src, size=args.n_points, replace=False, p=probs_src)
                 src_pcd, src_feats = src_pcd[idx_src], src_feats[idx_src]
-            if (tgt_pcd.size(0) > 1000):
+            if (tgt_pcd.size(0) > args.n_points):
                 idx = np.arange(tgt_pcd.size(0))
                 probs = (tgt_scores / tgt_scores.sum()).numpy().flatten()
-                idx = np.random.choice(idx, size=1000, replace=False, p=probs)
+                idx = np.random.choice(idx, size=args.n_points, replace=False, p=probs)
                 tgt_pcd, tgt_feats = tgt_pcd[idx], tgt_feats[idx]
 
             ########################################
             # Save out the output
             source_features_npz = os.path.join(args.output_dir, '{}'.format(problem_id))
+            src_pcd = src_pcd.detach().cpu().numpy()
+            src_feats = src_feats.detach().cpu().numpy()
             np.savez_compressed(source_features_npz, xyz_down=src_pcd, features=src_feats)
 
             target_features_npz = os.path.join(args.output_dir, os.path.splitext(target_pcd_filename)[0])
-            np.savez_compressed(target_features_npz, xyz_down=tgt_pcd, features=tgt_feats)
+            if not os.path.exists(target_features_npz):
+                tgt_pcd = tgt_pcd.detach().cpu().numpy()
+                tgt_feats = tgt_feats.detach().cpu().numpy()
+                np.savez_compressed(target_features_npz, xyz_down=tgt_pcd, features=tgt_feats)
 
     print("N fails OOM: ", n_fails_oom)
     print("N fails runtime: ", n_fails_other)
@@ -145,6 +150,7 @@ if __name__ == '__main__':
     # load configs
     parser = argparse.ArgumentParser()
     parser.add_argument('config', type=str, help='Choose 3DMatch or KITTI')
+    parser.add_argument('n_points', type=int, help="Number of points to describe")
 
     # Benchmark files and dirs
     parser.add_argument('--input_txt', type=str,
