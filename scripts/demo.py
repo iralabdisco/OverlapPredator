@@ -77,15 +77,21 @@ def main(config, neighborhood_limits, args):
             # forward pass
             try:
                 feats, scores_overlap, scores_saliency = config.model(inputs)  # [N1, C1], [N2, C2]
+                torch.cuda.empty_cache()
                 status = "ok"
-
             except RuntimeError as e:
                 if str(e).startswith('CUDA out of memory.'):
+                    torch.cuda.empty_cache()
                     status = "OOM"
                     n_fails_oom += 1
+                    #TODO save error code
+                    continue
                 else:
+                    torch.cuda.empty_cache()
                     status = "runtime_error"
                     n_fails_other += 1
+                    #TODO save error code
+                    continue
 
             torch.cuda.empty_cache()
 
@@ -109,25 +115,18 @@ def main(config, neighborhood_limits, args):
             tgt_scores = tgt_overlap * tgt_saliency
 
 
-            try:
-                if (src_pcd.size(0) > config.n_points):
-                    idx = np.arange(src_pcd.size(0))
-                    probs = (src_scores / src_scores.sum()).numpy().flatten()
-                    idx = np.random.choice(idx, size=config.n_points, replace=False, p=probs)
-                    src_pcd, src_feats = src_pcd[idx], src_feats[idx]
-                if (tgt_pcd.size(0) > config.n_points):
-                    idx = np.arange(tgt_pcd.size(0))
-                    probs = (tgt_scores / tgt_scores.sum()).numpy().flatten()
-                    idx = np.random.choice(idx, size=config.n_points, replace=False, p=probs)
-                    tgt_pcd, tgt_feats = tgt_pcd[idx], tgt_feats[idx]
-            except Exception as e:
-                print(e)
-                n_fails_other += 1
+            if (src_pcd.size(0) > config.n_points):
+                idx_src = np.arange(src_pcd.size(0))
+                probs_src = (src_scores / src_scores.sum()).numpy().flatten()
+                idx_src = np.random.choice(idx_src, size=config.n_points, replace=False, p=probs_src)
+                src_pcd, src_feats = src_pcd[idx_src], src_feats[idx_src]
+            if (tgt_pcd.size(0) > config.n_points):
+                idx = np.arange(tgt_pcd.size(0))
+                probs = (tgt_scores / tgt_scores.sum()).numpy().flatten()
+                idx = np.random.choice(idx, size=config.n_points, replace=False, p=probs)
+                tgt_pcd, tgt_feats = tgt_pcd[idx], tgt_feats[idx]
 
             ########################################
-            # run ransac and draw registration
-            tsfm = ransac_pose_estimation(src_pcd, tgt_pcd, src_feats, tgt_feats, mutual=False)
-
             # TODO save features
 
     print("N fails OOM: ", n_fails_oom)
